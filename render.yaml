@@ -1,0 +1,85 @@
+# render.yaml — Render Blueprint for Mission Ignite OTA SSB
+# Deploy with one click: https://render.com/deploy?repo=<your-repo-url>
+# ────────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── NestJS Backend ──────────────────────────────────────────────────────────
+  - type: web
+    name: mission-ignite-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: singapore  # Change to nearest region (fra, oregon, ohio, singapore)
+    plan: free         # Use "starter" ($7/mo) for always-on + no spin-down
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "4000"
+      - key: SWAGGER_ENABLED
+        value: "true"
+      # Database (PostgreSQL on Render)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mission-ignite-db
+          property: connectionString
+      - key: DIRECT_URL
+        fromDatabase:
+          name: mission-ignite-db
+          property: connectionString
+      # Redis
+      - key: REDIS_URL
+        fromService:
+          name: mission-ignite-redis
+          type: redis
+          property: connectionString
+      # Auth
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: "15m"
+      - key: GOOGLE_CLIENT_ID
+        sync: false  # Set manually in Render dashboard
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        value: "https://mission-ignite-api.onrender.com/api/v1/auth/google/callback"
+      # Google Drive
+      - key: GOOGLE_DRIVE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_DRIVE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_DRIVE_REDIRECT_URI
+        value: "https://mission-ignite-api.onrender.com/api/v1/drive/callback"
+      # Ollama
+      - key: OLLAMA_API_URL
+        value: "http://localhost:11434"
+      - key: OLLAMA_DEFAULT_MODE
+        value: "local"  # Free tier: default to user-local Ollama
+      # Cloudinary
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      # Frontend
+      - key: FRONTEND_URL
+        sync: false
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  - type: redis
+    name: mission-ignite-redis
+    plan: free  # 25MB, suitable for Bull queues + caching
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []  # Internal access only
+
+# ── PostgreSQL Database ──────────────────────────────────────────────────────
+databases:
+  - name: mission-ignite-db
+    plan: free      # 256MB, 1GB storage
+    databaseName: mission_ignite
+    postgresMajorVersion: "16"
+    ipAllowList: []  # Internal access only
