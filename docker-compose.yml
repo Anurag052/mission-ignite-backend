@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — LOCAL DEVELOPMENT ONLY
+# In production, use:
+#   Database → Supabase (https://supabase.com)
+#   Redis    → Upstash  (https://upstash.com)
+#   Storage  → Cloudinary (https://cloudinary.com)
+#   Backend  → Railway (https://railway.app) or Render (https://render.com)
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: '3.9'
+
+services:
+  # ── Local NestJS backend (dev hot-reload) ────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder # Use builder stage for dev (has devDeps)
+    container_name: mi-backend-dev
+    restart: unless-stopped
+    ports:
+      - '4000:4000'
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      # Local Postgres (override DATABASE_URL from .env for dev)
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/mission_ignite?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@postgres:5432/mission_ignite?schema=public
+      # Local Redis (no TLS for dev)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ''
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src # Hot reload
+      - ./prisma:/app/prisma
+    command: [ 'sh', '-c', 'npx prisma migrate deploy && npm run start:dev' ]
+
+  # ── Local PostgreSQL (dev only — use Supabase in prod) ───────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: mi-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mission_ignite
+    ports:
+      - '5432:5432'
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ 'CMD-SHELL', 'pg_isready -U postgres' ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Local Redis (dev only — use Upstash in prod) ─────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: mi-redis-dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ 'CMD', 'redis-cli', 'ping' ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:
+  redis_data:

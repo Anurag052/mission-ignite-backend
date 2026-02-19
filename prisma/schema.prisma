@@ -1,0 +1,528 @@
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Runtime URL: Supabase pgBouncer pooler (port 5432, session mode)
+  url       = env("DATABASE_URL")
+  // Direct URL: used ONLY by `prisma migrate` — bypasses pgBouncer
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  STUDENT
+  INSTRUCTOR
+  ADMIN
+}
+
+enum MenuType {
+  SSB
+  OTA
+  CAPF_AC
+}
+
+enum GTOTaskType {
+  HGT   // Half Group Task
+  FGT   // Full Group Task
+  PGT   // Progressive Group Task
+  GPE   // Group Planning Exercise
+  LECTURETTE
+  GD    // Group Discussion
+  COMMAND_TASK
+  IO    // Individual Obstacles
+}
+
+enum GTOSessionStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum MockStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  TIMED_OUT
+}
+
+enum UploadType {
+  QUESTION_BANK
+  STUDY_MATERIAL
+  AUDIO
+  IMAGE
+  VIDEO
+}
+
+enum AIOutputType {
+  EVALUATION
+  STUDY_PLAN
+  QA_RESPONSE
+  INTERVIEW_SIM
+  SUMMARY
+}
+
+enum NotebookCategory {
+  SSB
+  OTA
+  CAPF_AC
+  GENERAL
+}
+
+enum NotebookStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum NotebookContentType {
+  NOTES
+  QUIZ
+  INTERVIEW
+  CAPF_AC
+  AUDIO_OVERVIEW
+}
+
+enum DeviceType {
+  ANDROID
+  DESKTOP
+  TABLET
+  UNKNOWN
+}
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  passwordHash      String?
+  googleId          String?  @unique
+  name              String
+  avatarUrl         String?
+  role              Role     @default(STUDENT)
+  isEmailVerified   Boolean  @default(false)
+  isActive          Boolean  @default(true)
+  lastLoginAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  pdfUsage          PDFUsageTracking[]
+  aiOutputs         AIOutput[]
+  capfMocks         CAPFMock[]
+  otaMocks          OTAMock[]
+  psychTests        PsychologicalTest[]
+  gtoSessions       GTOTestSession[]
+  weeklyAnalytics   WeeklyAnalytic[]
+  agentLogs         AgentLog[]
+  refreshTokens     RefreshToken[]
+  notebooks         Notebook[]
+  modelPreferences  UserModelPreference[]
+  driveToken        GoogleDriveToken?
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
+}
+
+// ─── MenuCategories ───────────────────────────────────────────────────────────
+
+model MenuCategory {
+  id          String   @id @default(uuid())
+  type        MenuType @unique
+  label       String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subjects    Subject[]
+
+  @@map("menu_categories")
+}
+
+// ─── Subjects ─────────────────────────────────────────────────────────────────
+
+model Subject {
+  id             String   @id @default(uuid())
+  menuCategoryId String
+  menuCategory   MenuCategory @relation(fields: [menuCategoryId], references: [id])
+  name           String
+  slug           String   @unique
+  description    String?
+  syllabus       Json?    // structured syllabus JSON
+  orderIndex     Int      @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  topics         Topic[]
+
+  @@map("subjects")
+}
+
+model Topic {
+  id          String   @id @default(uuid())
+  subjectId   String
+  subject     Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  title       String
+  content     String?  @db.Text
+  orderIndex  Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("topics")
+}
+
+// ─── PsychologicalTests ───────────────────────────────────────────────────────
+
+model PsychologicalTest {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menuType     MenuType
+  testType     String   // TAT, WAT, SRT, SD, PPDT
+  prompt       String?  @db.Text
+  response     String?  @db.Text
+  aiScore      Float?
+  aiFeedback   String?  @db.Text
+  timeTakenSec Int?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("psychological_tests")
+}
+
+// ─── GTOTestSessions ──────────────────────────────────────────────────────────
+
+model GTOTestSession {
+  id            String           @id @default(uuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskType      GTOTaskType
+  status        GTOSessionStatus @default(PENDING)
+  durationSec   Int              @default(600) // countdown timer value
+  startedAt     DateTime?
+  completedAt   DateTime?
+  transcript    String?          @db.Text  // real-time streamed content
+  aiScore       Float?
+  aiFeedback    String?          @db.Text
+  metadata      Json?            // extra task-specific data
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  // GD sessions auto-deleted weekly via cron
+  isGD          Boolean          @default(false)
+
+  @@map("gto_test_sessions")
+}
+
+// ─── PDFUsageTracking ─────────────────────────────────────────────────────────
+
+model PDFUsageTracking {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gmailEmail  String   // Gmail email used for tracking
+  date        DateTime @db.Date  // date only, for daily bucketing
+  count       Int      @default(0)
+  dailyLimit  Int      @default(5)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, date])
+  @@map("pdf_usage_tracking")
+}
+
+// ─── AIOutputs ────────────────────────────────────────────────────────────────
+
+model AIOutput {
+  id           String       @id @default(uuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menuType     MenuType
+  outputType   AIOutputType
+  prompt       String?      @db.Text
+  response     String       @db.Text
+  modelUsed    String       // e.g. gemma2:2b
+  tokensUsed   Int?
+  latencyMs    Int?
+  cached       Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  @@map("ai_outputs")
+}
+
+// ─── CAPFMocks ────────────────────────────────────────────────────────────────
+
+model CAPFMock {
+  id              String     @id @default(uuid())
+  userId          String
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paper           Int        // 1 or 2
+  totalQuestions  Int
+  attempted       Int        @default(0)
+  correct         Int        @default(0)
+  wrong           Int        @default(0)
+  score           Float?
+  maxScore        Float?
+  durationSec     Int        // countdown timer
+  timeUsedSec     Int?
+  status          MockStatus @default(NOT_STARTED)
+  answers         Json?      // { questionId: selectedOption }
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@map("capf_mocks")
+}
+
+// ─── OTAMocks ─────────────────────────────────────────────────────────────────
+
+model OTAMock {
+  id              String     @id @default(uuid())
+  userId          String
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject         String     // Indian Polity, History, etc.
+  totalQuestions  Int
+  attempted       Int        @default(0)
+  correct         Int        @default(0)
+  wrong           Int        @default(0)
+  score           Float?
+  maxScore        Float?
+  durationSec     Int
+  timeUsedSec     Int?
+  status          MockStatus @default(NOT_STARTED)
+  answers         Json?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@map("ota_mocks")
+}
+
+// ─── VisionMetrics ────────────────────────────────────────────────────────────
+
+model VisionMetric {
+  id            String   @id @default(uuid())
+  userId        String
+  sourceType    String   // HANDWRITING, DOCUMENT, PPDT_SKETCH
+  fileUrl       String
+  ocrText       String?  @db.Text
+  confidence    Float?
+  processingMs  Int?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@map("vision_metrics")
+}
+
+// ─── VoiceMetrics ─────────────────────────────────────────────────────────────
+
+model VoiceMetric {
+  id              String   @id @default(uuid())
+  userId          String
+  sourceType      String   // LECTURETTE, GD, INTERVIEW
+  audioUrl        String
+  transcript      String?  @db.Text
+  durationSec     Float?
+  wordsPerMinute  Float?
+  clarityScore    Float?
+  processingMs    Int?
+  createdAt       DateTime @default(now())
+
+  @@map("voice_metrics")
+}
+
+// ─── WeeklyAnalytics ──────────────────────────────────────────────────────────
+
+model WeeklyAnalytic {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekStart         DateTime @db.Date
+  weekEnd           DateTime @db.Date
+  menuType          MenuType
+  testsAttempted    Int      @default(0)
+  avgScore          Float?
+  strongSubjects    Json?    // string[]
+  weakSubjects      Json?    // string[]
+  studyMinutes      Int      @default(0)
+  pdfGenerated      Int      @default(0)
+  aiInteractions    Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, weekStart, menuType])
+  @@map("weekly_analytics")
+}
+
+// ─── AdminUploads ─────────────────────────────────────────────────────────────
+
+model AdminUpload {
+  id           String     @id @default(uuid())
+  uploadedById String
+  uploadType   UploadType
+  fileName     String
+  fileUrl      String
+  fileSizeMb   Float
+  mimeType     String
+  menuType     MenuType?
+  subjectId    String?
+  description  String?
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@map("admin_uploads")
+}
+
+// ─── AgentLogs ────────────────────────────────────────────────────────────────
+
+model AgentLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  agentType   String   // LLM, CV, AUDIO, EVALUATOR
+  action      String
+  input       Json?
+  output      Json?
+  statusCode  Int?
+  errorMsg    String?  @db.Text
+  latencyMs   Int?
+  createdAt   DateTime @default(now())
+
+  @@map("agent_logs")
+}
+
+// ─── Notebooks ────────────────────────────────────────────────────────────────
+
+model Notebook {
+  id             String           @id @default(uuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title          String
+  category       NotebookCategory @default(GENERAL)
+  status         NotebookStatus   @default(PENDING)
+
+  // File info
+  fileName       String
+  filePath       String           // local disk path
+  fileSizeMb     Float
+  pageCount      Int              @default(0)
+
+  // Extracted content
+  extractedText  String?          @db.Text
+  wordCount      Int              @default(0)
+  chunkCount     Int              @default(0)
+
+  // Metadata from PDF
+  pdfTitle       String?
+  pdfAuthor      String?
+  pdfCreatedAt   String?
+
+  // Search & categorization
+  tags           String[]         @default([])
+  searchVector   String?          @db.Text  // raw text for PG full-text search
+
+  // Error tracking
+  errorMessage   String?
+
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  contents       NotebookContent[]
+
+  @@map("notebooks")
+}
+
+model NotebookContent {
+  id           String              @id @default(uuid())
+  notebookId   String
+  notebook     Notebook            @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  contentType  NotebookContentType
+  content      Json                // structured AI output
+  modelUsed    String              @default("gemma2:2b")
+  tokensUsed   Int?
+  generatedAt  DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@unique([notebookId, contentType])
+  @@map("notebook_contents")
+}
+
+model NotebookAnalytic {
+  id                    String   @id @default(uuid())
+  userId                String
+  weekStart             DateTime @db.Date
+  weekEnd               DateTime @db.Date
+  notebooksCreated      Int      @default(0)
+  totalPagesProcessed   Int      @default(0)
+  totalWordsProcessed   Int      @default(0)
+  quizAttempts          Int      @default(0)
+  avgQuizScore          Float?
+  contentTypesGenerated Json?    // { NOTES: 3, QUIZ: 2, ... }
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([userId, weekStart])
+  @@map("notebook_analytics")
+}
+
+// ─── User Model Preferences ──────────────────────────────────────────────────
+
+model UserModelPreference {
+  id            String     @id @default(uuid())
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceType    DeviceType @default(UNKNOWN)
+  deviceRamMb   Int?
+  selectedModel String     // e.g. "gemma2:2b"
+  modelSizeMb   Int
+  ollamaMode    String     @default("server") // "server" | "local"
+  ollamaUrl     String?    // custom URL if running Ollama locally
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([userId, deviceType])
+  @@map("user_model_preferences")
+}
+
+// ─── Google Drive Tokens ─────────────────────────────────────────────────────
+
+model GoogleDriveToken {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken   String   @db.Text
+  refreshToken  String   @db.Text
+  expiresAt     DateTime
+  rootFolderId  String?  // "MissionIgnite" folder on user's Drive
+  scope         String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("google_drive_tokens")
+}
+
